@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { getServiceById, getVariantById } from '@/data/services';
 import { Calendar, Users, Mail, Phone, User, ArrowLeft, MapPin, Plane } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import PayPalButton from '@/components/PayPalButton';
 
 const Checkout = () => {
   const { id } = useParams<{ id: string }>();
@@ -76,8 +77,6 @@ const Checkout = () => {
     return displayPrice;
   };
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({
       ...formData,
@@ -85,99 +84,49 @@ const Checkout = () => {
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-
-    try {
-      const formSubmitUrl = 'https://formsubmit.co/aitaliyassir55@gmail.com';
-      
-      let bookingData;
-
-      const serviceTitle = selectedVariant ? `${service?.title} - ${selectedVariant.label}` : service?.title;
-
-      if (service?.isRental) {
-        bookingData = {
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
-          from: formData.startDate,
-          to: formData.endDate,
-          number_of_days: calculateDays(),
-          message: formData.message,
-          service: serviceTitle,
-          price: displayPrice,
-          _subject: `New Rental Booking: ${serviceTitle}`,
-          _template: 'table',
-        };
-      } else if (service?.id === 'airport-transfer') {
-        bookingData = {
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
-          date: formData.date,
-          persons: formData.persons,
-          from: formData.from === 'Custom' ? formData.customFrom : formData.from,
-          to: formData.to === 'Custom' ? formData.customTo : formData.to,
-          flight_number: formData.flightNumber,
-          reference_label: formData.horseLabel,
-          message: formData.message,
-          service: serviceTitle,
-          price: displayPrice,
-          _subject: `New Airport Transfer Booking: ${serviceTitle}`,
-          _template: 'table',
-        };
-      } else {
-        const totalPrice = service?.priceVariants ? getTotalPriceDisplay() : displayPrice;
-        bookingData = {
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
-          date: formData.date,
-          ...(service?.priceVariants ? {
-            adults: formData.adultsCount,
-            children: formData.childrenCount,
-            total_price: totalPrice,
-          } : {
-            persons: formData.persons,
-          }),
-          message: formData.message,
-          service: serviceTitle,
-          price: totalPrice,
-          _subject: `New Booking: ${serviceTitle}`,
-          _template: 'table',
-        };
-      }
-
-      const formData = new FormData();
-      Object.entries(bookingData).forEach(([key, value]) => {
-        formData.append(key, String(value));
-      });
-
-      const response = await fetch(formSubmitUrl, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (response.ok) {
-        navigate('/thank-you');
-      } else {
-        toast({
-          title: 'Submission Error',
-          description: 'There was a problem submitting your booking. Please try again.',
-          variant: 'destructive',
-        });
-      }
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to submit booking. Please try again or contact us directly.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSubmitting(false);
+  const isFormValid = useMemo(() => {
+    if (!formData.name || !formData.email || !formData.phone) {
+      return false;
     }
-  };
+
+    if (service?.isRental) {
+      return formData.startDate && formData.endDate;
+    }
+
+    if (service?.id === 'airport-transfer') {
+      return formData.date && formData.from && formData.to &&
+        (formData.from !== 'Custom' || formData.customFrom) &&
+        (formData.to !== 'Custom' || formData.customTo);
+    }
+
+    return formData.date;
+  }, [formData, service]);
+
+  const paypalBookingData = useMemo(() => {
+    const serviceTitle = selectedVariant ? `${service?.title} - ${selectedVariant.label}` : service?.title || '';
+    const totalPrice = calculateTotalPrice();
+    const finalPrice = totalPrice !== null ? totalPrice : parseFloat(displayPrice?.replace(/[^0-9.]/g, '') || '0');
+
+    return {
+      serviceId: id || '',
+      serviceName: serviceTitle,
+      customerName: formData.name,
+      customerEmail: formData.email,
+      customerPhone: formData.phone,
+      bookingDate: formData.date,
+      persons: parseInt(formData.persons) || undefined,
+      adultsCount: parseInt(formData.adultsCount) || undefined,
+      childrenCount: parseInt(formData.childrenCount) || undefined,
+      startDate: formData.startDate,
+      endDate: formData.endDate,
+      transferFrom: formData.from === 'Custom' ? formData.customFrom : formData.from,
+      transferTo: formData.to === 'Custom' ? formData.customTo : formData.to,
+      flightNumber: formData.flightNumber,
+      message: formData.message,
+      pricePerPerson: selectedVariant?.price ? parseFloat(selectedVariant.price.replace(/[^0-9.]/g, '')) : undefined,
+      totalPrice: finalPrice,
+    };
+  }, [formData, service, selectedVariant, displayPrice, id, calculateTotalPrice]);
 
   if (!service) {
     return (
@@ -215,7 +164,7 @@ const Checkout = () => {
                   <CardTitle>Your Information</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <form onSubmit={handleSubmit} className="space-y-6">
+                  <div className="space-y-6">
                     <div className="space-y-2">
                       <Label htmlFor="name">Full Name *</Label>
                       <div className="relative">
@@ -535,10 +484,13 @@ const Checkout = () => {
                       />
                     </div>
 
-                    <Button type="submit" className="w-full" size="lg" disabled={isSubmitting}>
-                      {isSubmitting ? 'Submitting...' : 'Confirm Booking'}
-                    </Button>
-                  </form>
+                    <div className="pt-4 border-t">
+                      <PayPalButton
+                        bookingData={paypalBookingData}
+                        disabled={!isFormValid}
+                      />
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
